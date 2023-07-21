@@ -1,0 +1,80 @@
+  Resources:
+    MyS3Bucket:
+      Type: 'AWS::S3::Bucket'
+      Properties:
+        BucketName: 's3-test-task-bucket'
+
+    MyLambdaExecutionRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+            - 'sts:AssumeRole'
+        ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        Path: '/'
+        Policies:
+        - PolicyName: 's3-access'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - 's3:GetObject'
+              - 's3:ListBucket'
+              Resource:
+                - 'arn:aws:s3:::s3-test-task-bucket'
+                - 'arn:aws:s3:::s3-test-task-bucket/*'
+
+
+    MyLambdaFunction:
+      Type: 'AWS::Lambda::Function'
+      Properties:
+        Role: !GetAtt MyLambdaExecutionRole.Arn
+        Code:
+          ZipFile: |
+            import boto3
+            from botocore.exceptions import NoCredentialsError
+
+            def lambda_handler(event, context):
+                
+                s3 = boto3.resource('s3')
+                my_bucket = s3.Bucket('s3-test-task-bucket')
+
+                objs = []
+                try:
+                    for obj in my_bucket.objects.all():
+                        objs.append({'Key': obj.key, 'LastModified': obj.last_modified})
+                except NoCredentialsError:
+                    return {
+                        'statusCode': 400,
+                        'body': 'No AWS Credentials found'
+                    }
+                
+                if not objs:
+                    return {
+                        'statusCode': 400,
+                        'body': 'No objects found in the bucket'
+                    }
+
+                latest_file = max(objs, key=lambda x: x['LastModified'])
+
+                s3_client = boto_sess.client('s3')
+                presigned_url = s3_client.generate_presigned_url('get_object',
+                                                                Params={'Bucket': 's3-test-task-bucket',
+                                                                        'Key': latest_file['Key']},
+                                                                ExpiresIn=900)
+
+                return {
+                    'statusCode': 200,
+                    'body': presigned_url
+                }
+        Handler: 'index.lambda_handler'
+        Runtime: 'python3.8'
+        Timeout: 15
